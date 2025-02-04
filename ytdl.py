@@ -39,47 +39,68 @@ def formatcheck(format):
     else:
         prGreen("Format is valid")
 
-
-# Custom progress hook function for tqdm progress bar
-def progress_hook(d):
-    if d['status'] == 'downloading':
-        # We update the progress bar by the number of bytes downloaded
-        downloaded = d['downloaded_bytes']
-        pbar.update(downloaded - pbar.n)  # Update progress
-    if d['status'] == 'finished':
-        print('Done downloading, now post-processing ...')
+# Function to create progress bar
+def create_progress_bar(total_bytes):
+    return tqdm(
+        total=total_bytes,
+        unit='B',
+        unit_scale=True,
+        unit_divisor=1024,
+        desc="Downloading"
+    )
 
 # Function to download video
-def download_video(url, format_choice):
-    global pbar  # Access global progress bar
+def download_video(url, format_type):
+    pbar = None
+    # Function to update progress bar
+    def progress_hook(d):
+        nonlocal pbar
+        if d['status'] == 'downloading':
+            if pbar is None and d.get('total_bytes'):
+                pbar = create_progress_bar(d['total_bytes'])
+            if pbar:
+                downloaded = d.get('downloaded_bytes', 0)
+                pbar.update(downloaded - pbar.n)
+        elif d['status'] == 'finished' and pbar:
+            pbar.close()
 
-    # Set the options for yt-dlp
-    if format_choice == "mp3":
-        ydl_opts = {
-            'format': 'bestaudio',  # Download best audio
-            'extractaudio': True,         # Extract audio
-            'audioformat': 'mp3',         # Convert to mp3
-            'outtmpl': '%(title)s.%(ext)s',  # Set output file name
-            'progress_hooks': [progress_hook],  # Progress hook to update tqdm
+    # Dictionary of format options
+    format_options = {
+        'mp3': {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
+        },
+        'mp4': {
+            'format': 'best'
         }
-    else:
-        ydl_opts = {
-            'format': 'mp4',  # Download best video and audio
-            'outtmpl': '%(title)s.%(ext)s',  # Set output file name
-            'progress_hooks': [progress_hook],  # Progress hook to update tqdm
-        }
+    }
 
-    # Create the tqdm progress bar, with total set to 1 (this will change dynamically)
-    pbar = tqdm(total=1, unit='B', unit_scale=True, desc="Downloading")
+    # Check if the format is supported
+    if format_type not in format_options:
+        print(f"Error: Format '{format_type}' not supported. Use 'mp3' or 'mp4'.")
+        sys.exit(1)
 
-    # Create yt-dlp instance and start the download
-    with ytdl.YoutubeDL(ydl_opts) as ydl:
-        try:
-            ydl.download([url])  # Start the download
-        except Exception as e:
-            print(f"An error occurred: {e}")
-        finally:
-            pbar.close()  # Close the progress bar when done
+    # Set youtube-dl options
+    ydl_opts = {
+        **format_options[format_type],
+        'progress_hooks': [progress_hook],
+        'outtmpl': '%(title)s.%(ext)s'
+    }
+
+    # Attempt to download the video
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        prGreen("\nDownload complete!")
+    except Exception as e:
+        if pbar:
+            pbar.close()
+        print(f"\nError: {str(e)}")
+        sys.exit(1)
 
 
 ##########################################################################################
